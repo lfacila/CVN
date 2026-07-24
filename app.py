@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import google.generativeai as genai
 import fitz  # PyMuPDF
@@ -72,26 +73,33 @@ with col2:
                 {texto_pdf}
                 """
                 
-                try:
+               try:
                     respuesta = model.generate_content(prompt)
-                    texto_respuesta = respuesta.text.strip().replace("```json", "").replace("```", "")
-                    datos_extraidos = json.loads(texto_respuesta)
                     
-                    # Añadir el nombre del archivo de origen y la categoría
-                    datos_extraidos["Archivo Origen"] = doc.name
-                    datos_extraidos["Categoría"] = categoria
+                    # Buscar exclusivamente el bloque JSON usando expresiones regulares
+                    match = re.search(r'\{.*\}', respuesta.text.strip(), re.DOTALL)
                     
-                    st.session_state.historial_meritos.append(datos_extraidos)
-                    
-                    st.success(f"✔️ {doc.name} procesado.")
-                    # Mostrar en texto plano fácil de copiar
-                    for clave, valor in datos_extraidos.items():
-                        if clave not in ["Archivo Origen", "Categoría"]:
-                            st.markdown(f"**{clave}:** {valor}")
-                    st.divider()
+                    if match:
+                        texto_respuesta = match.group(0)
+                        datos_extraidos = json.loads(texto_respuesta)
+                        
+                        # Añadir el nombre del archivo de origen y la categoría
+                        datos_extraidos["Archivo Origen"] = doc.name
+                        datos_extraidos["Categoría"] = categoria
+                        
+                        st.session_state.historial_meritos.append(datos_extraidos)
+                        
+                        st.success(f"✔️ {doc.name} procesado.")
+                        # Mostrar en texto plano fácil de copiar
+                        for clave, valor in datos_extraidos.items():
+                            if clave not in ["Archivo Origen", "Categoría"]:
+                                st.markdown(f"**{clave}:** {valor}")
+                        st.divider()
+                    else:
+                        st.error(f"Error procesando {doc.name}: No se encontró un formato JSON válido.")
                     
                 except Exception as e:
-                    st.error(f"Error procesando {doc.name}: No se pudo generar la estructura correctamente. Vuelve a intentarlo.")
+                    st.error(f"Error técnico procesando {doc.name}: Vuelve a intentarlo.")
 
 # Sección de Exportación
 st.header("4. Repositorio Acumulado")
