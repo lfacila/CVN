@@ -1,11 +1,12 @@
 import streamlit as st
 import google.generativeai as genai
 import fitz  # PyMuPDF
-import io
+import pandas as pd
+import json
 
 # Configuración de la página
-st.set_page_config(page_title="Actualizador CVN-PDF", page_icon="📄")
-st.title("Actualizador Automático de CVN-PDF con Gemini Pro")
+st.set_page_config(page_title="Extractor CVN FECYT", page_icon="📄", layout="wide")
+st.title("Extractor de Méritos para CVN (FECYT)")
 
 # Configurar API Key
 if "GEMINI_API_KEY" in st.secrets:
@@ -13,91 +14,102 @@ if "GEMINI_API_KEY" in st.secrets:
 else:
     st.error("Falta configurar la GEMINI_API_KEY en los secretos de Streamlit.")
 
-st.header("1. Sube tu CVN-PDF actual")
-st.info("Sube el PDF que descargas directamente desde FECYT, sin haberlo re-guardado.")
-base_pdf = st.file_uploader("Sube tu CVN base", type=["pdf"], key="base")
+# Inicializar un historial en la sesión para guardar los méritos extraídos
+if "historial_meritos" not in st.session_state:
+    st.session_state.historial_meritos = []
 
-st.header("2. Sube el nuevo mérito")
-nuevo_doc = st.file_uploader("Sube el artículo, diploma, certificado, etc.", type=["pdf"], key="nuevo")
+# Interfaz principal
+col1, col2 = st.columns([1, 2])
 
-categoria = st.selectbox("¿Qué tipo de mérito es?", [
-    "Publicación / Artículo Científico", 
-    "Ponencia en Congreso", 
-    "Póster / Comunicación", 
-    "Ensayo Clínico",
-    "Tesis Dirigida",
-    "Mérito Académico / Título"
-])
+with col1:
+    st.header("1. Configuración")
+    categoria = st.selectbox("¿Qué tipo de mérito vas a procesar?", [
+        "Artículo Científico", 
+        "Ponencia / Comunicación en Congreso", 
+        "Ensayo Clínico / Proyecto",
+        "Tesis Dirigida"
+    ])
+    
+    st.header("2. Subir Documentos")
+    st.info("Puedes subir varios PDFs a la vez si son del mismo tipo.")
+    documentos = st.file_uploader("Sube los PDFs", type=["pdf"], accept_multiple_files=True)
+    
+    procesar_btn = st.button("Extraer Datos")
 
-if st.button("Procesar e inyectar al CVN-PDF"):
-    if base_pdf and nuevo_doc:
-        with st.spinner("Extrayendo XML y procesando con Inteligencia Artificial..."):
-            
-            # --- 1. Extraer el XML del PDF Base ---
-            pdf_bytes = base_pdf.read()
-            doc_base = fitz.open(stream=pdf_bytes, filetype="pdf")
-            
-            embedded_files = doc_base.embfile_names()
-            xml_text = ""
-            xml_filename = ""
-            
-            if embedded_files:
-                for emb in embedded_files:
-                    # Extraemos el contenido de cada adjunto para ver si es el XML de FECYT
-                    xml_bytes = doc_base.embfile_get(emb)
-                    texto_prueba = xml_bytes.decode('utf-8', errors='ignore')
+with col2:
+    st.header("3. Resultados Listos para Copiar")
+    
+    if procesar_btn and documentos:
+        model = genai.GenerativeModel('gemini-pro')
+        
+        # Definir los campos a extraer según la categoría
+        if categoria == "Artículo Científico":
+            formato_esperado = '{"Título": "", "Autores": "", "Posición de firma": "", "Revista": "", "Año": "", "Volumen y Páginas": "", "DOI": "", "PMID": ""}'
+        elif categoria == "Ponencia / Comunicación en Congreso":
+            formato_esperado = '{"Título del trabajo": "", "Nombre del congreso": "", "Tipo de evento": "", "Tipo de participación": "", "Ciudad": "", "Fecha": "", "Entidad organizadora": ""}'
+        elif categoria == "Ensayo Clínico / Proyecto":
+            formato_esperado = '{"Nombre del proyecto": "", "Grado de contribución": "", "Entidad financiadora": "", "Fecha de inicio": ""}'
+        else: # Tesis Dirigida
+            formato_esperado = '{"Título del trabajo": "", "Alumno": "", "Entidad de realización": "", "Calificación": "", "Fecha de defensa": ""}'
+
+        for doc in documentos:
+            with st.spinner(f"Analizando: {doc.name}..."):
+                # Extraer texto del PDF
+                pdf_file = fitz.open(stream=doc.read(), filetype="pdf")
+                texto_pdf = ""
+                for page in pdf_file:
+                    texto_pdf += page.get_text()
+                
+                # Prompt estructurado pidiendo JSON
+                prompt = f"""
+                Eres un asistente que extrae información de documentos para rellenar un currículum médico.
+                Extrae los datos del siguiente documento correspondiente a un '{categoria}'.
+                
+                Debes devolver ÚNICAMENTE un objeto JSON válido con esta estructura exacta (deja en blanco lo que no encuentres):
+                {formato_esperado}
+                
+                Texto del documento:
+                {texto_pdf}
+                """
+                
+                try:
+                    respuesta = model.generate_content(prompt)
+                    texto_respuesta = respuesta.text.strip().replace("```json", "").replace("```", "")
+                    datos_extraidos = json.loads(texto_respuesta)
                     
-                    # Buscamos la cabecera estándar de XML o la etiqueta cvn
-                    if "<?xml" in texto_prueba or "<cvn" in texto_prueba.lower():
-                        xml_filename = emb
-                        xml_text = texto_prueba
-                        break
-            
-            if not xml_text:
-                st.error("No se ha encontrado el XML incrustado. Detalles técnicos para depurar:")
-                st.write("Archivos incrustados detectados por el sistema:", embedded_files)
-                st.stop()
-                
-            # --- 2. Extraer texto del nuevo mérito ---
-            doc_nuevo = fitz.open(stream=nuevo_doc.read(), filetype="pdf")
-            texto_nuevo = ""
-            for page in doc_nuevo:
-                texto_nuevo += page.get_text()
-                
-            # --- 3. Llamada a Gemini para generar el nuevo nodo XML ---
-            prompt = f"""
-            Eres un experto en el estándar CVN de FECYT.
-            A continuación te proporciono un documento de un nuevo mérito de la categoría '{categoria}'.
-            Extrae los datos relevantes de este documento.
-            
-            Analiza el CVN-XML para ver exactamente cómo se etiquetan los méritos de esta categoría y devuelve ÚNICAMENTE el fragmento de código XML necesario para añadir este nuevo mérito. No inventes etiquetas que no existan en el estándar CVN.
-            
-            Texto del nuevo mérito:
-            {texto_nuevo}
-            """
-            
-            model = genai.GenerativeModel('gemini-pro')
-            respuesta = model.generate_content(prompt)
-            nuevo_nodo_xml = respuesta.text.replace("```xml", "").replace("```", "").strip()
-            
-            st.success("Información extraída y estructurada correctamente.")
-            with st.expander("Ver el nodo XML generado"):
-                st.code(nuevo_nodo_xml, language="xml")
-            
-            # --- 4. Inserción simple en el XML ---
-            xml_actualizado = xml_text.replace("</cvn>", f"\n{nuevo_nodo_xml}\n</cvn>")
-            
-            # --- 5. Reincrustar el XML en el PDF ---
-            doc_base.embfile_del(xml_filename)
-            doc_base.embfile_add(xml_filename, xml_actualizado.encode('utf-8'), filename=xml_filename)
-            
-            pdf_actualizado_bytes = doc_base.write()
-            
-            st.download_button(
-                label="Descargar CVN-PDF Actualizado",
-                data=pdf_actualizado_bytes,
-                file_name="CVN_Actualizado_Importable.pdf",
-                mime="application/pdf"
-            )
-    else:
-        st.warning("Falta subir alguno de los documentos.")
+                    # Añadir el nombre del archivo de origen y la categoría
+                    datos_extraidos["Archivo Origen"] = doc.name
+                    datos_extraidos["Categoría"] = categoria
+                    
+                    st.session_state.historial_meritos.append(datos_extraidos)
+                    
+                    st.success(f"✔️ {doc.name} procesado.")
+                    # Mostrar en texto plano fácil de copiar
+                    for clave, valor in datos_extraidos.items():
+                        if clave not in ["Archivo Origen", "Categoría"]:
+                            st.markdown(f"**{clave}:** {valor}")
+                    st.divider()
+                    
+                except Exception as e:
+                    st.error(f"Error procesando {doc.name}: No se pudo generar la estructura correctamente. Vuelve a intentarlo.")
+
+# Sección de Exportación
+st.header("4. Repositorio Acumulado")
+if st.session_state.historial_meritos:
+    df = pd.DataFrame(st.session_state.historial_meritos)
+    st.dataframe(df)
+    
+    # Botón para descargar en CSV
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Descargar todos los méritos en CSV (Para Excel)",
+        data=csv,
+        file_name='Meritos_CVN_Extraidos.csv',
+        mime='text/csv',
+    )
+    
+    if st.button("Limpiar historial"):
+        st.session_state.historial_meritos = []
+        st.experimental_rerun()
+else:
+    st.info("Aún no has procesado ningún documento. Los resultados aparecerán aquí y podrás exportarlos.")
