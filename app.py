@@ -41,7 +41,7 @@ with col2:
     st.header("3. Resultados Listos para Copiar")
     
     if procesar_btn and documentos:
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-1.5-pro')
         
         # Definir los campos a extraer según la categoría
         if categoria == "Artículo Científico":
