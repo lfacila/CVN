@@ -61,12 +61,17 @@ with col2:
                 for page in pdf_file:
                     texto_pdf += page.get_text()
                 
-                # Prompt estructurado pidiendo JSON
+                # Prompt estructurado pidiendo JSON estricto
                 prompt = f"""
-                Eres un asistente que extrae información de documentos para rellenar un currículum médico.
+                Eres un asistente experto en extracción de datos.
                 Extrae los datos del siguiente documento correspondiente a un '{categoria}'.
                 
-                Debes devolver ÚNICAMENTE un objeto JSON válido con esta estructura exacta (deja en blanco lo que no encuentres):
+                REGLAS ESTRICTAS:
+                1. Devuelve ÚNICAMENTE un objeto JSON válido.
+                2. No añadas introducciones, ni texto antes o después de las llaves {{ e }}.
+                3. Escapa correctamente cualquier comilla doble (") dentro de los textos usando la barra invertida (\").
+                4. Elimina los saltos de línea dentro de los valores extraídos.
+                5. Usa esta estructura exacta (deja en blanco lo que no encuentres):
                 {formato_esperado}
                 
                 Texto del documento:
@@ -76,12 +81,26 @@ with col2:
                 try:
                     respuesta = model.generate_content(prompt)
                     
-                    # Buscar exclusivamente el bloque JSON usando expresiones regulares
-                    match = re.search(r'\{.*\}', respuesta.text.strip(), re.DOTALL)
+                    # Limpieza agresiva del texto devuelto
+                    texto_respuesta = respuesta.text.strip()
+                    
+                    # Quitar las etiquetas de bloque de código si Gemini las pone
+                    if texto_respuesta.startswith("```json"):
+                        texto_respuesta = texto_respuesta[7:]
+                    elif texto_respuesta.startswith("```"):
+                        texto_respuesta = texto_respuesta[3:]
+                        
+                    if texto_respuesta.endswith("```"):
+                        texto_respuesta = texto_respuesta[:-3]
+                        
+                    texto_respuesta = texto_respuesta.strip()
+                    
+                    # Buscar el bloque JSON
+                    match = re.search(r'\{.*\}', texto_respuesta, re.DOTALL)
                     
                     if match:
-                        texto_respuesta = match.group(0)
-                        datos_extraidos = json.loads(texto_respuesta)
+                        clean_json = match.group(0)
+                        datos_extraidos = json.loads(clean_json)
                         
                         # Añadir el nombre del archivo de origen y la categoría
                         datos_extraidos["Archivo Origen"] = doc.name
@@ -89,17 +108,27 @@ with col2:
                         
                         st.session_state.historial_meritos.append(datos_extraidos)
                         
-                        st.success(f"✔️ {doc.name} procesado.")
+                        st.success(f"✔️ {doc.name} procesado correctamente.")
                         # Mostrar en texto plano fácil de copiar
                         for clave, valor in datos_extraidos.items():
                             if clave not in ["Archivo Origen", "Categoría"]:
                                 st.markdown(f"**{clave}:** {valor}")
                         st.divider()
                     else:
-                        st.error(f"Error procesando {doc.name}: No se encontró un formato JSON válido.")
+                        st.error(f"Error en {doc.name}: No se encontró un formato válido.")
+                        with st.expander("Ver respuesta de la IA (Para depurar)"):
+                            st.write(texto_respuesta)
                     
+                except json.JSONDecodeError as json_error:
+                    st.error(f"Error de formato en {doc.name}. El PDF tiene caracteres complejos que rompieron la estructura.")
+                    with st.expander("Ver detalle del error"):
+                        st.write(str(json_error))
+                        st.write("Texto que intentó procesar:")
+                        st.write(clean_json)
                 except Exception as e:
-                    st.error(f"Error técnico procesando {doc.name}: Vuelve a intentarlo.")
+                    st.error(f"Error técnico inesperado procesando {doc.name}.")
+                    with st.expander("Ver detalle del error"):
+                        st.write(str(e))
 
 # Sección de Exportación
 st.header("4. Repositorio Acumulado")
