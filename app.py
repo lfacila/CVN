@@ -28,42 +28,10 @@ with col1:
     
     # Extraer la lista real de modelos autorizados para esta API Key
     try:
-                    respuesta = model.generate_content(prompt)
-                    texto_respuesta = respuesta.text.strip()
-                    
-                    # 1. Intentar buscar un bloque de código markdown limpio
-                    bloque_codigo = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', texto_respuesta, re.DOTALL | re.IGNORECASE)
-                    
-                    if bloque_codigo:
-                        clean_json = bloque_codigo.group(1)
-                    else:
-                        # 2. Si el modelo "piensa en voz alta", buscamos todos los bloques con formato JSON y nos quedamos con el ÚLTIMO (la respuesta final)
-                        posibles_jsons = re.findall(r'\{[^{}]*\}', texto_respuesta)
-                        if posibles_jsons:
-                            clean_json = posibles_jsons[-1]
-                        else:
-                            # 3. Fallback de seguridad
-                            start = texto_respuesta.find('{')
-                            end = texto_respuesta.rfind('}')
-                            clean_json = texto_respuesta[start:end+1] if start != -1 and end != -1 else texto_respuesta
-                            
-                    datos_extraidos = json.loads(clean_json)
-                    
-                    # Añadir el nombre del archivo de origen y la categoría
-                    datos_extraidos["Archivo Origen"] = doc.name
-                    datos_extraidos["Categoría"] = categoria
-                    
-                    st.session_state.historial_meritos.append(datos_extraidos)
-                    
-                    st.success(f"✔️ {doc.name} procesado correctamente.")
-                    
-                    # Mostrar en texto plano fácil de copiar
-                    for clave, valor in datos_extraidos.items():
-                        if clave not in ["Archivo Origen", "Categoría"]:
-                            st.markdown(f"**{clave}:** {valor}")
-                    st.divider()
-                    
-                except json.JSONDecodeError as json_error:
+        modelos_disponibles = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    except Exception as e:
+        st.error("Error al conectar con la API de Google. Comprueba que tu clave API sea correcta.")
+        st.stop()
         
     if not modelos_disponibles:
         st.error("Tu API Key no tiene acceso a modelos de generación de texto.")
@@ -131,44 +99,46 @@ with col2:
                     respuesta = model.generate_content(prompt)
                     texto_respuesta = respuesta.text.strip()
                     
-                    if texto_respuesta.startswith("```json"):
-                        texto_respuesta = texto_respuesta[7:]
-                    elif texto_respuesta.startswith("```"):
-                        texto_respuesta = texto_respuesta[3:]
-                        
-                    if texto_respuesta.endswith("```"):
-                        texto_respuesta = texto_respuesta[:-3]
-                        
-                    texto_respuesta = texto_respuesta.strip()
+                    # 1. Intentar buscar un bloque de código markdown limpio
+                    bloque_codigo = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', texto_respuesta, re.DOTALL | re.IGNORECASE)
                     
-                    match = re.search(r'\{.*\}', texto_respuesta, re.DOTALL)
-                    
-                    if match:
-                        clean_json = match.group(0)
-                        datos_extraidos = json.loads(clean_json)
-                        
-                        datos_extraidos["Archivo Origen"] = doc.name
-                        datos_extraidos["Categoría"] = categoria
-                        
-                        st.session_state.historial_meritos.append(datos_extraidos)
-                        
-                        st.success(f"✔️ {doc.name} procesado correctamente.")
-                        
-                        for clave, valor in datos_extraidos.items():
-                            if clave not in ["Archivo Origen", "Categoría"]:
-                                st.markdown(f"**{clave}:** {valor}")
-                        st.divider()
+                    if bloque_codigo:
+                        clean_json = bloque_codigo.group(1)
                     else:
-                        st.error(f"Error en {doc.name}: No se encontró un formato válido.")
-                        with st.expander("Ver respuesta de la IA (Para depurar)"):
-                            st.write(texto_respuesta)
+                        # 2. Si el modelo "piensa en voz alta", buscamos todos los bloques con formato JSON y nos quedamos con el ÚLTIMO (la respuesta final)
+                        posibles_jsons = re.findall(r'\{[^{}]*\}', texto_respuesta)
+                        if posibles_jsons:
+                            clean_json = posibles_jsons[-1]
+                        else:
+                            # 3. Fallback de seguridad
+                            start = texto_respuesta.find('{')
+                            end = texto_respuesta.rfind('}')
+                            clean_json = texto_respuesta[start:end+1] if start != -1 and end != -1 else texto_respuesta
+                            
+                    datos_extraidos = json.loads(clean_json)
+                    
+                    datos_extraidos["Archivo Origen"] = doc.name
+                    datos_extraidos["Categoría"] = categoria
+                    
+                    st.session_state.historial_meritos.append(datos_extraidos)
+                    
+                    st.success(f"✔️ {doc.name} procesado correctamente.")
+                    
+                    for clave, valor in datos_extraidos.items():
+                        if clave not in ["Archivo Origen", "Categoría"]:
+                            st.markdown(f"**{clave}:** {valor}")
+                    st.divider()
                     
                 except json.JSONDecodeError as json_error:
                     st.error(f"Error de formato en {doc.name}. El PDF tiene caracteres complejos que rompieron la estructura.")
                     with st.expander("Ver detalle del error"):
                         st.write(str(json_error))
                         st.write("Texto devuelto:")
-                        st.write(clean_json)
+                        # Usar fallback para mostrar lo que se intentó parsear
+                        if 'clean_json' in locals():
+                            st.write(clean_json)
+                        else:
+                            st.write(texto_respuesta)
                 except Exception as e:
                     st.error(f"Error técnico procesando {doc.name}.")
                     with st.expander("Ver detalle del error"):
@@ -190,6 +160,6 @@ if st.session_state.historial_meritos:
     
     if st.button("Limpiar historial"):
         st.session_state.historial_meritos = []
-        st.experimental_rerun()
+        st.rerun()
 else:
     st.info("Aún no has procesado ningún documento.")
