@@ -14,7 +14,7 @@ else:
     st.error("Falta configurar la GEMINI_API_KEY en los secretos de Streamlit.")
 
 st.header("1. Sube tu CVN-PDF actual")
-st.info("Sube el PDF que descargas desde FECYT (contiene el XML incrustado).")
+st.info("Sube el PDF que descargas directamente desde FECYT, sin haberlo re-guardado.")
 base_pdf = st.file_uploader("Sube tu CVN base", type=["pdf"], key="base")
 
 st.header("2. Sube el nuevo mérito")
@@ -37,21 +37,25 @@ if st.button("Procesar e inyectar al CVN-PDF"):
             pdf_bytes = base_pdf.read()
             doc_base = fitz.open(stream=pdf_bytes, filetype="pdf")
             
-            # Buscar archivos incrustados
             embedded_files = doc_base.embfile_names()
             xml_text = ""
             xml_filename = ""
             
             if embedded_files:
                 for emb in embedded_files:
-                    if emb.endswith(".xml"):
+                    # Extraemos el contenido de cada adjunto para ver si es el XML de FECYT
+                    xml_bytes = doc_base.embfile_get(emb)
+                    texto_prueba = xml_bytes.decode('utf-8', errors='ignore')
+                    
+                    # Buscamos la cabecera estándar de XML o la etiqueta cvn
+                    if "<?xml" in texto_prueba or "<cvn" in texto_prueba.lower():
                         xml_filename = emb
-                        xml_bytes = doc_base.embfile_get(emb)
-                        xml_text = xml_bytes.decode('utf-8', errors='ignore')
+                        xml_text = texto_prueba
                         break
             
             if not xml_text:
-                st.error("No se ha encontrado ningún archivo XML incrustado en el PDF base. Asegúrate de que es el PDF exportado por FECYT.")
+                st.error("No se ha encontrado el XML incrustado. Detalles técnicos para depurar:")
+                st.write("Archivos incrustados detectados por el sistema:", embedded_files)
                 st.stop()
                 
             # --- 2. Extraer texto del nuevo mérito ---
@@ -66,7 +70,7 @@ if st.button("Procesar e inyectar al CVN-PDF"):
             A continuación te proporciono un documento de un nuevo mérito de la categoría '{categoria}'.
             Extrae los datos relevantes de este documento.
             
-            Luego, analiza la estructura del CVN-XML base para ver exactamente cómo se etiquetan los méritos de esta categoría y devuelve ÚNICAMENTE el fragmento de código XML necesario para añadir este nuevo mérito. No inventes etiquetas que no existan en el estándar CVN.
+            Analiza el CVN-XML para ver exactamente cómo se etiquetan los méritos de esta categoría y devuelve ÚNICAMENTE el fragmento de código XML necesario para añadir este nuevo mérito. No inventes etiquetas que no existan en el estándar CVN.
             
             Texto del nuevo mérito:
             {texto_nuevo}
@@ -81,14 +85,9 @@ if st.button("Procesar e inyectar al CVN-PDF"):
                 st.code(nuevo_nodo_xml, language="xml")
             
             # --- 4. Inserción simple en el XML ---
-            # Nota: Esto insertará el nodo generado justo antes de la etiqueta de cierre correspondiente.
-            # Al ser un prototipo, lo insertamos al final del documento justo antes del cierre principal </cvn>
-            # En producción, Gemini puede indicar dónde inyectarlo o usar ElementTree.
-            
             xml_actualizado = xml_text.replace("</cvn>", f"\n{nuevo_nodo_xml}\n</cvn>")
             
             # --- 5. Reincrustar el XML en el PDF ---
-            # Borramos el XML antiguo e incrustamos el nuevo
             doc_base.embfile_del(xml_filename)
             doc_base.embfile_add(xml_filename, xml_actualizado.encode('utf-8'), filename=xml_filename)
             
