@@ -14,6 +14,7 @@ if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 else:
     st.error("Falta configurar la GEMINI_API_KEY en los secretos de Streamlit.")
+    st.stop()
 
 # Inicializar un historial en la sesión para guardar los méritos extraídos
 if "historial_meritos" not in st.session_state:
@@ -24,6 +25,21 @@ col1, col2 = st.columns([1, 2])
 
 with col1:
     st.header("1. Configuración")
+    
+    # Extraer la lista real de modelos autorizados para esta API Key
+    try:
+        modelos_disponibles = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    except Exception as e:
+        st.error("Error al conectar con la API de Google. Comprueba que tu clave API sea correcta.")
+        st.stop()
+        
+    if not modelos_disponibles:
+        st.error("Tu API Key no tiene acceso a modelos de generación de texto.")
+        st.stop()
+        
+    # Desplegable para que elijas tú el modelo que no dé error
+    modelo_elegido = st.selectbox("Selecciona el motor de Inteligencia Artificial", modelos_disponibles)
+    
     categoria = st.selectbox("¿Qué tipo de mérito vas a procesar?", [
         "Artículo Científico", 
         "Ponencia / Comunicación en Congreso", 
@@ -41,27 +57,8 @@ with col2:
     st.header("3. Resultados Listos para Copiar")
     
     if procesar_btn and documentos:
-        # Buscar automáticamente un modelo disponible para tu API Key
-        modelo_disponible = None
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                # Preferir modelos avanzados si están disponibles
-                if 'flash' in m.name or 'pro' in m.name:
-                    modelo_disponible = m.name
-                    break
-        
-        # Fallback por si no encuentra la palabra flash o pro
-        if not modelo_disponible:
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    modelo_disponible = m.name
-                    break
-
-        if not modelo_disponible:
-            st.error("Tu clave API actual no tiene acceso a ningún modelo de generación de texto.")
-            st.stop()
-            
-        model = genai.GenerativeModel(modelo_disponible)
+        # Usamos exactamente el modelo que has seleccionado en el desplegable
+        model = genai.GenerativeModel(modelo_elegido)
         
         # Definir los campos a extraer según la categoría
         if categoria == "Artículo Científico":
@@ -100,11 +97,8 @@ with col2:
                 
                 try:
                     respuesta = model.generate_content(prompt)
-                    
-                    # Limpieza agresiva del texto devuelto
                     texto_respuesta = respuesta.text.strip()
                     
-                    # Quitar las etiquetas de bloque de código si Gemini las pone
                     if texto_respuesta.startswith("```json"):
                         texto_respuesta = texto_respuesta[7:]
                     elif texto_respuesta.startswith("```"):
@@ -115,21 +109,19 @@ with col2:
                         
                     texto_respuesta = texto_respuesta.strip()
                     
-                    # Buscar el bloque JSON
                     match = re.search(r'\{.*\}', texto_respuesta, re.DOTALL)
                     
                     if match:
                         clean_json = match.group(0)
                         datos_extraidos = json.loads(clean_json)
                         
-                        # Añadir el nombre del archivo de origen y la categoría
                         datos_extraidos["Archivo Origen"] = doc.name
                         datos_extraidos["Categoría"] = categoria
                         
                         st.session_state.historial_meritos.append(datos_extraidos)
                         
                         st.success(f"✔️ {doc.name} procesado correctamente.")
-                        # Mostrar en texto plano fácil de copiar
+                        
                         for clave, valor in datos_extraidos.items():
                             if clave not in ["Archivo Origen", "Categoría"]:
                                 st.markdown(f"**{clave}:** {valor}")
@@ -143,10 +135,10 @@ with col2:
                     st.error(f"Error de formato en {doc.name}. El PDF tiene caracteres complejos que rompieron la estructura.")
                     with st.expander("Ver detalle del error"):
                         st.write(str(json_error))
-                        st.write("Texto que intentó procesar:")
+                        st.write("Texto devuelto:")
                         st.write(clean_json)
                 except Exception as e:
-                    st.error(f"Error técnico inesperado procesando {doc.name}.")
+                    st.error(f"Error técnico procesando {doc.name}.")
                     with st.expander("Ver detalle del error"):
                         st.write(str(e))
 
@@ -156,7 +148,6 @@ if st.session_state.historial_meritos:
     df = pd.DataFrame(st.session_state.historial_meritos)
     st.dataframe(df)
     
-    # Botón para descargar en CSV
     csv = df.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="Descargar todos los méritos en CSV (Para Excel)",
@@ -169,4 +160,4 @@ if st.session_state.historial_meritos:
         st.session_state.historial_meritos = []
         st.experimental_rerun()
 else:
-    st.info("Aún no has procesado ningún documento. Los resultados aparecerán aquí y podrás exportarlos.")
+    st.info("Aún no has procesado ningún documento.")
