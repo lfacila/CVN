@@ -37,14 +37,18 @@ with col1:
         st.error("Tu API Key no tiene acceso a modelos de generación de texto.")
         st.stop()
         
-    # Desplegable para que elijas tú el modelo que no dé error
+    # Desplegable para elegir el modelo
     modelo_elegido = st.selectbox("Selecciona el motor de Inteligencia Artificial", modelos_disponibles)
     
+    # Nuevas categorías añadidas basadas en tu CV
     categoria = st.selectbox("¿Qué tipo de mérito vas a procesar?", [
         "Artículo Científico", 
         "Ponencia / Comunicación en Congreso", 
         "Ensayo Clínico / Proyecto",
-        "Tesis Dirigida"
+        "Tesis Dirigida",
+        "Formación Académica / Títulos Propios",
+        "Méritos de Innovación / Gestión Clínica",
+        "Organización de Actividades de Formación y I+D+i"
     ])
     
     st.header("2. Subir Documentos")
@@ -57,18 +61,23 @@ with col2:
     st.header("3. Resultados Listos para Copiar")
     
     if procesar_btn and documentos:
-        # Usamos exactamente el modelo que has seleccionado en el desplegable
         model = genai.GenerativeModel(modelo_elegido)
         
-        # Definir los campos a extraer según la categoría
+        # Definir los campos a extraer según la nueva categoría
         if categoria == "Artículo Científico":
-            formato_esperado = '{"Título": "", "Autores": "", "Posición de firma": "", "Revista": "", "Año": "", "Volumen y Páginas": "", "DOI": "", "PMID": ""}'
+            formato_esperado = '{"Título": "", "Autores": "", "Posición de firma": "", "Revista": "", "Año": "", "Volumen y Páginas": "", "DOI": "", "PMID": "", "Importancia del mérito": ""}'
         elif categoria == "Ponencia / Comunicación en Congreso":
-            formato_esperado = '{"Título del trabajo": "", "Nombre del congreso": "", "Tipo de evento": "", "Tipo de participación": "", "Ciudad": "", "Fecha": "", "Entidad organizadora": ""}'
+            formato_esperado = '{"Título del trabajo": "", "Nombre del congreso": "", "Tipo de evento": "", "Tipo de participación": "", "Ciudad": "", "Fecha": "", "Entidad organizadora": "", "Importancia del mérito": ""}'
         elif categoria == "Ensayo Clínico / Proyecto":
-            formato_esperado = '{"Nombre del proyecto": "", "Grado de contribución": "", "Entidad financiadora": "", "Fecha de inicio": ""}'
-        else: # Tesis Dirigida
-            formato_esperado = '{"Título del trabajo": "", "Alumno": "", "Entidad de realización": "", "Calificación": "", "Fecha de defensa": ""}'
+            formato_esperado = '{"Nombre del proyecto": "", "Grado de contribución": "", "Entidad financiadora": "", "Fecha de inicio": "", "Importancia del mérito": ""}'
+        elif categoria == "Tesis Dirigida":
+            formato_esperado = '{"Título del trabajo": "", "Alumno": "", "Entidad de realización": "", "Calificación": "", "Fecha de defensa": "", "Importancia del mérito": ""}'
+        elif categoria == "Formación Académica / Títulos Propios":
+            formato_esperado = '{"Título del trabajo": "", "Entidad de realización": "", "Fecha": "", "Calificación": "", "Importancia del mérito": ""}'
+        elif categoria == "Méritos de Innovación / Gestión Clínica":
+            formato_esperado = '{"Tipo de mérito": "", "Cargo": "", "Entidad": "", "Fecha de inicio": "", "Fecha de fin": "", "Logros": "", "Importancia del mérito": ""}'
+        elif categoria == "Organización de Actividades de Formación y I+D+i":
+            formato_esperado = '{"Tipo de actividad": "", "Título de la actividad": "", "Entidad convocante": "", "Fecha": "", "Asistentes/Horas": "", "Importancia del mérito": ""}'
 
         for doc in documentos:
             with st.spinner(f"Analizando: {doc.name}..."):
@@ -78,10 +87,12 @@ with col2:
                 for page in pdf_file:
                     texto_pdf += page.get_text()
                 
-                # Prompt estructurado pidiendo JSON estricto
+                # Prompt estructurado
                 prompt = f"""
                 Eres un asistente experto en extracción de datos.
                 Extrae los datos del siguiente documento correspondiente a un '{categoria}'.
+                
+                Además, en el campo 'Importancia del mérito', debes redactar un breve párrafo (2 o 3 líneas) justificando el valor específico de este mérito. El enfoque debe destacar su relevancia para un cardiólogo clínico especializado en insuficiencia cardiaca y riesgo cardiovascular, o bien su aporte curricular para un profesor asociado de medicina en la universidad. Sé riguroso y profesional, basándote únicamente en la temática del documento sin inventar datos que no existan en él.
                 
                 REGLAS ESTRICTAS:
                 1. Devuelve ÚNICAMENTE un objeto JSON válido.
@@ -99,18 +110,16 @@ with col2:
                     respuesta = model.generate_content(prompt)
                     texto_respuesta = respuesta.text.strip()
                     
-                    # 1. Intentar buscar un bloque de código markdown limpio
+                    # Limpieza de bloques de código
                     bloque_codigo = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', texto_respuesta, re.DOTALL | re.IGNORECASE)
                     
                     if bloque_codigo:
                         clean_json = bloque_codigo.group(1)
                     else:
-                        # 2. Si el modelo "piensa en voz alta", buscamos todos los bloques con formato JSON y nos quedamos con el ÚLTIMO (la respuesta final)
                         posibles_jsons = re.findall(r'\{[^{}]*\}', texto_respuesta)
                         if posibles_jsons:
                             clean_json = posibles_jsons[-1]
                         else:
-                            # 3. Fallback de seguridad
                             start = texto_respuesta.find('{')
                             end = texto_respuesta.rfind('}')
                             clean_json = texto_respuesta[start:end+1] if start != -1 and end != -1 else texto_respuesta
@@ -134,7 +143,6 @@ with col2:
                     with st.expander("Ver detalle del error"):
                         st.write(str(json_error))
                         st.write("Texto devuelto:")
-                        # Usar fallback para mostrar lo que se intentó parsear
                         if 'clean_json' in locals():
                             st.write(clean_json)
                         else:
