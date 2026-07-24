@@ -41,7 +41,27 @@ with col2:
     st.header("3. Resultados Listos para Copiar")
     
     if procesar_btn and documentos:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Buscar automáticamente un modelo disponible para tu API Key
+        modelo_disponible = None
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                # Preferir modelos avanzados si están disponibles
+                if 'flash' in m.name or 'pro' in m.name:
+                    modelo_disponible = m.name
+                    break
+        
+        # Fallback por si no encuentra la palabra flash o pro
+        if not modelo_disponible:
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    modelo_disponible = m.name
+                    break
+
+        if not modelo_disponible:
+            st.error("Tu clave API actual no tiene acceso a ningún modelo de generación de texto.")
+            st.stop()
+            
+        model = genai.GenerativeModel(modelo_disponible)
         
         # Definir los campos a extraer según la categoría
         if categoria == "Artículo Científico":
