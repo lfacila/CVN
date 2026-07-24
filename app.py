@@ -1,9 +1,9 @@
-import re
 import streamlit as st
 import google.generativeai as genai
 import fitz  # PyMuPDF
 import pandas as pd
 import json
+import re
 
 # Configuración de la página
 st.set_page_config(page_title="Extractor CVN FECYT", page_icon="📄", layout="wide")
@@ -73,7 +73,7 @@ with col2:
                 {texto_pdf}
                 """
                 
-               try:
+                try:
                     respuesta = model.generate_content(prompt)
                     
                     # Buscar exclusivamente el bloque JSON usando expresiones regulares
