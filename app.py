@@ -7,7 +7,7 @@ import re
 
 # Configuración de la página
 st.set_page_config(page_title="Extractor CVN FECYT", page_icon="📄", layout="wide")
-st.title("Extractor de Méritos para CVN (FECYT)")
+st.title("Extractor Automático de Méritos para CVN (FECYT)")
 
 # Configurar API Key
 if "GEMINI_API_KEY" in st.secrets:
@@ -26,33 +26,21 @@ col1, col2 = st.columns([1, 2])
 with col1:
     st.header("1. Configuración")
     
-    # Extraer la lista real de modelos autorizados para esta API Key
+    # Extraer la lista real de modelos autorizados
     try:
         modelos_disponibles = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
     except Exception as e:
-        st.error("Error al conectar con la API de Google. Comprueba que tu clave API sea correcta.")
+        st.error("Error al conectar con la API de Google. Comprueba tu clave API.")
         st.stop()
         
     if not modelos_disponibles:
         st.error("Tu API Key no tiene acceso a modelos de generación de texto.")
         st.stop()
         
-    # Desplegable para elegir el modelo
     modelo_elegido = st.selectbox("Selecciona el motor de Inteligencia Artificial", modelos_disponibles)
     
-    # Nuevas categorías añadidas basadas en tu CV
-    categoria = st.selectbox("¿Qué tipo de mérito vas a procesar?", [
-        "Artículo Científico", 
-        "Ponencia / Comunicación en Congreso", 
-        "Ensayo Clínico / Proyecto",
-        "Tesis Dirigida",
-        "Formación Académica / Títulos Propios",
-        "Méritos de Innovación / Gestión Clínica",
-        "Organización de Actividades de Formación y I+D+i"
-    ])
-    
     st.header("2. Subir Documentos")
-    st.info("Puedes subir varios PDFs a la vez si son del mismo tipo.")
+    st.info("Sube diplomas sueltos o tu CV completo. El sistema detectará automáticamente el tipo de mérito de cada elemento.")
     documentos = st.file_uploader("Sube los PDFs", type=["pdf"], accept_multiple_files=True)
     
     procesar_btn = st.button("Extraer Datos")
@@ -63,44 +51,40 @@ with col2:
     if procesar_btn and documentos:
         model = genai.GenerativeModel(modelo_elegido)
         
-        # Definir los campos a extraer según la nueva categoría
-        if categoria == "Artículo Científico":
-            formato_esperado = '{"Título": "", "Autores": "", "Posición de firma": "", "Revista": "", "Año": "", "Volumen y Páginas": "", "DOI": "", "PMID": "", "Importancia del mérito": ""}'
-        elif categoria == "Ponencia / Comunicación en Congreso":
-            formato_esperado = '{"Título del trabajo": "", "Nombre del congreso": "", "Tipo de evento": "", "Tipo de participación": "", "Ciudad": "", "Fecha": "", "Entidad organizadora": "", "Importancia del mérito": ""}'
-        elif categoria == "Ensayo Clínico / Proyecto":
-            formato_esperado = '{"Nombre del proyecto": "", "Grado de contribución": "", "Entidad financiadora": "", "Fecha de inicio": "", "Importancia del mérito": ""}'
-        elif categoria == "Tesis Dirigida":
-            formato_esperado = '{"Título del trabajo": "", "Alumno": "", "Entidad de realización": "", "Calificación": "", "Fecha de defensa": "", "Importancia del mérito": ""}'
-        elif categoria == "Formación Académica / Títulos Propios":
-            formato_esperado = '{"Título del trabajo": "", "Entidad de realización": "", "Fecha": "", "Calificación": "", "Importancia del mérito": ""}'
-        elif categoria == "Méritos de Innovación / Gestión Clínica":
-            formato_esperado = '{"Tipo de mérito": "", "Cargo": "", "Entidad": "", "Fecha de inicio": "", "Fecha de fin": "", "Logros": "", "Importancia del mérito": ""}'
-        elif categoria == "Organización de Actividades de Formación y I+D+i":
-            formato_esperado = '{"Tipo de actividad": "", "Título de la actividad": "", "Entidad convocante": "", "Fecha": "", "Asistentes/Horas": "", "Importancia del mérito": ""}'
+        # Diccionario con las estructuras requeridas para FECYT
+        esquemas_fecyt = """
+        - "Artículo Científico": ["Título", "Autores", "Posición de firma", "Revista", "Año", "Volumen y Páginas", "DOI", "PMID", "Importancia del mérito"]
+        - "Ponencia / Comunicación en Congreso": ["Título del trabajo", "Nombre del congreso", "Tipo de evento", "Tipo de participación", "Ciudad", "Fecha", "Entidad organizadora", "Importancia del mérito"]
+        - "Ensayo Clínico / Proyecto": ["Nombre del proyecto", "Grado de contribución", "Entidad financiadora", "Fecha de inicio", "Importancia del mérito"]
+        - "Tesis Dirigida": ["Título del trabajo", "Alumno", "Entidad de realización", "Calificación", "Fecha de defensa", "Importancia del mérito"]
+        - "Formación Académica / Títulos Propios": ["Título del trabajo", "Entidad de realización", "Fecha", "Calificación", "Importancia del mérito"]
+        - "Méritos de Innovación / Gestión Clínica": ["Tipo de mérito", "Cargo", "Entidad", "Fecha de inicio", "Fecha de fin", "Logros", "Importancia del mérito"]
+        - "Organización de Actividades de Formación y I+D+i": ["Tipo de actividad", "Título de la actividad", "Entidad convocante", "Fecha", "Asistentes/Horas", "Importancia del mérito"]
+        """
 
         for doc in documentos:
-            with st.spinner(f"Analizando: {doc.name}..."):
-                # Extraer texto del PDF
+            with st.spinner(f"Analizando {doc.name} en busca de méritos..."):
                 pdf_file = fitz.open(stream=doc.read(), filetype="pdf")
                 texto_pdf = ""
                 for page in pdf_file:
                     texto_pdf += page.get_text()
                 
-                # Prompt estructurado
+                # Prompt con auto-detección
                 prompt = f"""
-                Eres un asistente experto en extracción de datos.
-                Extrae los datos del siguiente documento correspondiente a un '{categoria}'.
+                Eres un asistente experto en extracción de datos curriculares para el estándar FECYT.
+                Analiza el siguiente documento y extrae TODOS los méritos que encuentres (pueden ser decenas si es un CV completo).
                 
-                Además, en el campo 'Importancia del mérito', debes redactar un breve párrafo (2 o 3 líneas) justificando el valor específico de este mérito. El enfoque debe destacar su relevancia para un cardiólogo clínico especializado en insuficiencia cardiaca y riesgo cardiovascular, o bien su aporte curricular para un profesor asociado de medicina en la universidad. Sé riguroso y profesional, basándote únicamente en la temática del documento sin inventar datos que no existan en él.
+                Para cada mérito, debes:
+                1. Identificar a qué categoría pertenece utilizando ÚNICAMENTE una de las opciones de esta lista:
+                {esquemas_fecyt}
+                
+                2. Redactar en el campo 'Importancia del mérito' un breve párrafo (2 o 3 líneas) justificando su valor para un cardiólogo clínico especializado en insuficiencia cardiaca y riesgo cardiovascular, o su aporte para un profesor universitario asociado. Sé riguroso.
                 
                 REGLAS ESTRICTAS:
-                1. Devuelve ÚNICAMENTE un objeto JSON válido.
-                2. No añadas introducciones, ni texto antes o después de las llaves {{ e }}.
-                3. Escapa correctamente cualquier comilla doble (") dentro de los textos usando la barra invertida (\").
-                4. Elimina los saltos de línea dentro de los valores extraídos.
-                5. Usa esta estructura exacta (deja en blanco lo que no encuentres):
-                {formato_esperado}
+                1. Devuelve ÚNICAMENTE un ARRAY JSON válido que empiece por [ y termine por ]. No añadas texto introductorio.
+                2. Cada objeto dentro del array DEBE tener una clave llamada "Categoría detectada" con el nombre exacto de la categoría elegida.
+                3. El resto de claves del objeto deben ser EXACTAMENTE las que corresponden a esa categoría según la lista anterior.
+                4. Escapa comillas dobles internas con barra invertida (\").
                 
                 Texto del documento:
                 {texto_pdf}
@@ -110,39 +94,43 @@ with col2:
                     respuesta = model.generate_content(prompt)
                     texto_respuesta = respuesta.text.strip()
                     
-                    # Limpieza de bloques de código
-                    bloque_codigo = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', texto_respuesta, re.DOTALL | re.IGNORECASE)
-                    
+                    # Limpieza de formato
+                    bloque_codigo = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', texto_respuesta, re.DOTALL | re.IGNORECASE)
                     if bloque_codigo:
                         clean_json = bloque_codigo.group(1)
                     else:
-                        posibles_jsons = re.findall(r'\{[^{}]*\}', texto_respuesta)
-                        if posibles_jsons:
-                            clean_json = posibles_jsons[-1]
+                        match = re.search(r'\[.*\]', texto_respuesta, re.DOTALL)
+                        if match:
+                            clean_json = match.group(0)
                         else:
-                            start = texto_respuesta.find('{')
-                            end = texto_respuesta.rfind('}')
+                            start = texto_respuesta.find('[')
+                            end = texto_respuesta.rfind(']')
                             clean_json = texto_respuesta[start:end+1] if start != -1 and end != -1 else texto_respuesta
                             
-                    datos_extraidos = json.loads(clean_json)
+                    lista_extraida = json.loads(clean_json)
+                    if isinstance(lista_extraida, dict):
+                        lista_extraida = [lista_extraida]
                     
-                    datos_extraidos["Archivo Origen"] = doc.name
-                    datos_extraidos["Categoría"] = categoria
+                    st.success(f"✔️ {doc.name} procesado: ¡Se han detectado {len(lista_extraida)} mérito(s)!")
                     
-                    st.session_state.historial_meritos.append(datos_extraidos)
-                    
-                    st.success(f"✔️ {doc.name} procesado correctamente.")
-                    
-                    for clave, valor in datos_extraidos.items():
-                        if clave not in ["Archivo Origen", "Categoría"]:
-                            st.markdown(f"**{clave}:** {valor}")
-                    st.divider()
+                    for i, datos in enumerate(lista_extraida):
+                        # Extraer y normalizar la categoría detectada
+                        cat_detectada = datos.pop("Categoría detectada", "Desconocida")
+                        datos["Categoría"] = cat_detectada
+                        datos["Archivo Origen"] = doc.name
+                        
+                        st.session_state.historial_meritos.append(datos)
+                        
+                        st.markdown(f"### Mérito {i+1} - {cat_detectada}")
+                        for clave, valor in datos.items():
+                            if clave not in ["Archivo Origen", "Categoría"]:
+                                st.markdown(f"**{clave}:** {valor}")
+                        st.divider()
                     
                 except json.JSONDecodeError as json_error:
-                    st.error(f"Error de formato en {doc.name}. El PDF tiene caracteres complejos que rompieron la estructura.")
+                    st.error(f"Error de formato en {doc.name}. El texto contiene caracteres que rompen la estructura.")
                     with st.expander("Ver detalle del error"):
-                        st.write(str(json_error))
-                        st.write("Texto devuelto:")
+                        st.write("Asegúrate de no exceder los límites de la IA si el CV es demasiado largo.")
                         if 'clean_json' in locals():
                             st.write(clean_json)
                         else:
@@ -155,7 +143,17 @@ with col2:
 # Sección de Exportación
 st.header("4. Repositorio Acumulado")
 if st.session_state.historial_meritos:
+    # Convertir a DataFrame. Pandas automáticamente alineará las columnas distintas creando huecos vacíos (NaN) donde no aplique.
     df = pd.DataFrame(st.session_state.historial_meritos)
+    
+    # Reordenar columnas para que Categoría y Archivo Origen salgan primero
+    cols = df.columns.tolist()
+    for col_name in ["Archivo Origen", "Categoría"]:
+        if col_name in cols:
+            cols.remove(col_name)
+            cols.insert(0, col_name)
+    df = df[cols]
+    
     st.dataframe(df)
     
     csv = df.to_csv(index=False).encode('utf-8')
